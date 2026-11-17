@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
-import { Badge, Card, PageHeader, PrimaryBtn, GhostBtn, IconBtn, SearchInput, FilterPill, Modal, FormRow, Input, Select, Textarea, ModalActions, DetailRow, Th, Td, IcoPlus, IcoEdit, IcoEye, IcoToggle } from "../components/ui";
+import { useEffect, useState, type ChangeEvent } from "react";
+import { Badge, Card, PageHeader, PrimaryBtn, GhostBtn, IconBtn, SearchInput, FilterPill, Modal, FormRow, Input, Select, Textarea, ModalActions, DetailRow, Th, Td, IcoPlus, IcoEdit, IcoEye, IcoToggle, IcoTrash } from "../components/ui";
 import { useToast } from "../components/feedback";
 import { nextPrefixedId, readTable, toDatabaseDateTime, usePersistentState, writeTable, type ServicioRow } from "../data/prototypeDatabase";
 
-type Service = { id: string; name: string; desc: string; duration: string; price: string; specialty: string; active: boolean };
+type Service = { id: string; name: string; desc: string; duration: string; price: string; specialty: string; active: boolean; image?: string };
 
 const SERVICE_IMAGES: Record<string, string> = {
   "Manicure Clásico": "/services/manicure-clasico.png",
@@ -36,8 +36,8 @@ const INITIAL: Service[] = [
   { id: "S-008", name: "Nail Art Premium", desc: "Diseños complejos con piedras y decoraciones", duration: "120", price: "95000", specialty: "Nail Art", active: true },
 ];
 
-const EMPTY = { name: "", desc: "", duration: "", price: "", specialty: "Manicure" };
-type ModalMode = "create" | "edit" | "detail" | null;
+const EMPTY = { name: "", desc: "", duration: "", price: "", specialty: "Manicure", image: "" };
+type ModalMode = "create" | "edit" | "detail" | "delete" | null;
 
 const fmt = (price: string) => `$${parseInt(price).toLocaleString("es-CO")}`;
 
@@ -78,7 +78,7 @@ export default function ServicesView() {
   const open = (mode: ModalMode, svc?: Service) => {
     setSelected(svc ?? null);
     if (mode === "create") setForm({ ...EMPTY });
-    if (mode === "edit" && svc) setForm({ name: svc.name, desc: svc.desc, duration: svc.duration, price: svc.price, specialty: svc.specialty });
+    if (mode === "edit" && svc) setForm({ name: svc.name, desc: svc.desc, duration: svc.duration, price: svc.price, specialty: svc.specialty, image: svc.image ?? "" });
     setModal(mode);
   };
 
@@ -98,6 +98,36 @@ export default function ServicesView() {
     setModal(null);
   };
 
+  const deleteService = () => {
+    if (!selected) return;
+    setServices(current => current.filter(service => service.id !== selected.id));
+    setModal(null);
+    toast.show("success", "Servicio eliminado del catálogo");
+  };
+
+  const handleImageChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.show("error", "Selecciona un archivo de imagen válido");
+      return;
+    }
+    if (file.size > 1_000_000) {
+      toast.show("error", "La imagen debe pesar máximo 1 MB");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const image = reader.result;
+      if (typeof image === "string") setForm(current => ({ ...current, image }));
+    };
+    reader.onerror = () => toast.show("error", "No se pudo leer la imagen seleccionada");
+    reader.readAsDataURL(file);
+  };
+
+  const getServiceImage = (service: Service) => service.image || SERVICE_IMAGES[service.name];
   const toggleStatus = (id: string) => setServices(p => p.map(s => s.id === id ? { ...s, active: !s.active } : s));
   const f = (k: keyof typeof EMPTY) => (v: string) => setForm(p => ({ ...p, [k]: v }));
 
@@ -131,8 +161,8 @@ export default function ServicesView() {
               onMouseEnter={e => (e.currentTarget.style.boxShadow = "0px 8px 24px rgba(0,0,0,0.08)")}
               onMouseLeave={e => (e.currentTarget.style.boxShadow = "0px 4px 12px rgba(0,0,0,0.05)")}>
               <div style={{ position: "relative", margin: "-20px -20px 14px", height: "150px", overflow: "hidden", borderRadius: "12px 12px 0 0", background: "#FCE8EE" }}>
-                {SERVICE_IMAGES[s.name]
-                  ? <img src={SERVICE_IMAGES[s.name]} alt={s.name} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                {getServiceImage(s)
+                  ? <img src={getServiceImage(s)} alt={s.name} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
                   : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#B8405E" }}><IcoScissors /></div>}
                 <div style={{ position: "absolute", top: "10px", right: "10px" }}>
                   <Badge label={s.active ? "Activo" : "Inactivo"} />
@@ -147,6 +177,7 @@ export default function ServicesView() {
               <div style={{ display: "flex", gap: "6px" }}>
                 <IconBtn icon={<IcoEye />} onClick={() => open("detail", s)} title="Ver detalle" />
                 <IconBtn icon={<IcoEdit />} onClick={() => open("edit", s)} variant="primary" title="Editar" />
+                <IconBtn icon={<IcoTrash />} onClick={() => open("delete", s)} variant="danger" title="Eliminar del catálogo" />
                 <button onClick={() => toggleStatus(s.id)}
                   style={{ flex: 1, padding: "6px", borderRadius: "8px", fontSize: "11px", fontWeight: 600, border: "1px solid #E4E4E7", background: s.active ? "#F9F9FB" : "#FCE8EE", color: s.active ? "#71717A" : "#B8405E", cursor: "pointer" }}>
                   {s.active ? "Inactivar" : "Activar"}
@@ -166,7 +197,7 @@ export default function ServicesView() {
                     <Td><span style={{ fontSize: "11px", fontWeight: 600, color: "#71717A" }}>{s.id}</span></Td>
                     <Td style={{ color: "#221F20", fontWeight: 500 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                        {SERVICE_IMAGES[s.name] && <img src={SERVICE_IMAGES[s.name]} alt="" style={{ width: "48px", height: "42px", objectFit: "cover", borderRadius: "7px", flexShrink: 0 }} />}
+                        {getServiceImage(s) && <img src={getServiceImage(s)} alt="" style={{ width: "48px", height: "42px", objectFit: "cover", borderRadius: "7px", flexShrink: 0 }} />}
                         <div><div style={{ fontWeight: 500, color: "#221F20" }}>{s.name}</div><div style={{ fontSize: "11px", color: "#71717A" }}>{s.desc}</div></div>
                       </div>
                     </Td>
@@ -178,6 +209,7 @@ export default function ServicesView() {
                       <div style={{ display: "flex", gap: "5px" }}>
                         <IconBtn icon={<IcoEye />} onClick={() => open("detail", s)} title="Ver detalle" />
                         <IconBtn icon={<IcoEdit />} onClick={() => open("edit", s)} variant="primary" title="Editar" />
+                        <IconBtn icon={<IcoTrash />} onClick={() => open("delete", s)} variant="danger" title="Eliminar del catálogo" />
                         <IconBtn icon={<IcoToggle />} onClick={() => toggleStatus(s.id)} title="Cambiar estado" />
                       </div>
                     </Td>
@@ -195,6 +227,16 @@ export default function ServicesView() {
           <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
             <FormRow label="Nombre del servicio" required><Input value={form.name} onChange={f("name")} placeholder="Ej. Manicure Express" /></FormRow>
             <FormRow label="Descripción"><Textarea value={form.desc} onChange={f("desc")} placeholder="Describe el servicio..." /></FormRow>
+            <FormRow label="Imagen del servicio (opcional, máximo 1 MB)">
+              <input type="file" accept="image/*" onChange={handleImageChange}
+                style={{ padding: "8px", border: "1px solid #8A8A93", borderRadius: "8px", fontSize: "12px", color: "#52525B", width: "100%", boxSizing: "border-box" }} />
+              {form.image && (
+                <div style={{ display: "flex", alignItems: "center", gap: "12px", marginTop: "8px" }}>
+                  <img src={form.image} alt="Vista previa de la imagen del servicio" style={{ width: "88px", height: "64px", objectFit: "cover", borderRadius: "8px" }} />
+                  <GhostBtn onClick={() => setForm(current => ({ ...current, image: "" }))}>Quitar imagen</GhostBtn>
+                </div>
+              )}
+            </FormRow>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
               <FormRow label="Duración estimada (min)" required><Input value={form.duration} onChange={f("duration")} placeholder="60" /></FormRow>
               <FormRow label="Precio (COP)" required><Input value={form.price} onChange={f("price")} placeholder="35000" /></FormRow>
@@ -208,7 +250,7 @@ export default function ServicesView() {
       {/* Detail */}
       {modal === "detail" && selected && (
         <Modal title="Detalle del Servicio" onClose={() => setModal(null)}>
-          {SERVICE_IMAGES[selected.name] && <img src={SERVICE_IMAGES[selected.name]} alt={selected.name} style={{ width: "100%", height: "180px", objectFit: "cover", borderRadius: "10px", marginBottom: "12px" }} />}
+          {getServiceImage(selected) && <img src={getServiceImage(selected)} alt={selected.name} style={{ width: "100%", height: "180px", objectFit: "cover", borderRadius: "10px", marginBottom: "12px" }} />}
           <DetailRow label="ID" value={selected.id} />
           <DetailRow label="Nombre" value={selected.name} />
           <DetailRow label="Especialidad" value={selected.specialty} />
@@ -220,6 +262,17 @@ export default function ServicesView() {
             <p style={{ fontSize: "13px", color: "#221F20", lineHeight: 1.6 }}>{selected.desc}</p>
           </div>
           <div style={{ marginTop: "20px", display: "flex", justifyContent: "flex-end" }}><GhostBtn onClick={() => setModal(null)}>Cerrar</GhostBtn></div>
+        </Modal>
+      )}
+
+      {modal === "delete" && selected && (
+        <Modal title="Eliminar Servicio" onClose={() => setModal(null)}>
+          <div style={{ textAlign: "center", padding: "16px 0" }}>
+            <div style={{ width: "52px", height: "52px", borderRadius: "50%", background: "#FEE2E2", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px", color: "#B91C1C" }}><IcoTrash /></div>
+            <p style={{ fontSize: "15px", fontWeight: 600, color: "#221F20", marginBottom: "8px" }}>¿Eliminar "{selected.name}" del catálogo?</p>
+            <p style={{ fontSize: "13px", color: "#71717A" }}>No estará disponible para nuevas citas. Las citas ya registradas conservarán el nombre del servicio.</p>
+          </div>
+          <ModalActions onClose={() => setModal(null)} onConfirm={deleteService} confirmLabel="Sí, eliminar" danger />
         </Modal>
       )}
     </div>

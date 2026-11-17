@@ -74,8 +74,7 @@ export default function AppointmentsView() {
     if (!stored) return SERVICES;
     try {
       const catalog = JSON.parse(stored) as { name: string; active: boolean }[];
-      const active = catalog.filter(service => service.active).map(service => service.name);
-      return active.length ? active : SERVICES;
+      return catalog.filter(service => service.active).map(service => service.name);
     } catch (error) {
       console.error("No se pudo leer el catálogo para las citas.", error);
       return SERVICES;
@@ -193,7 +192,7 @@ export default function AppointmentsView() {
   };
 
   const save = () => {
-    if (!form.client || !form.service.length || !form.employee || !form.date || !form.time) {
+    if (!form.client || !form.service.some(Boolean) || !form.employee || !form.date || !form.time) {
       toast.show("error", "Completa cliente, servicio, empleada, fecha y hora");
       return;
     }
@@ -375,6 +374,7 @@ export default function AppointmentsView() {
                   </label>
                 ))}
               </div>
+              {serviceOptions.length === 0 && <p style={{ fontSize: "12px", color: "#71717A" }}>No hay servicios activos en el catálogo para asignar a una cita.</p>}
             </FormRow>
             <FormRow label="Empleada asignada" required>
               <Select value={form.employee} onChange={f("employee")} options={employeeOptions.map(e => ({ label: e, value: e }))} />

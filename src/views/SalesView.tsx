@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Badge, Card, PageHeader, PrimaryBtn, GhostBtn, IconBtn, SearchInput, FilterPill, Modal, FormRow, Input, Select, ModalActions, DetailRow, Avatar, Th, Td, IcoPlus, IcoEdit, IcoEye, IcoDownload, IcoX } from "../components/ui";
+import { Badge, Card, PageHeader, PrimaryBtn, GhostBtn, IconBtn, SearchInput, FilterPill, Modal, FormRow, Input, Select, ModalActions, DetailRow, Avatar, Th, Td, IcoPlus, IcoEdit, IcoEye, IcoDownload, IcoX, IcoToggle } from "../components/ui";
 import { useToast } from "../components/feedback";
 import { downloadCsv, nextPrefixedId, readTable, usePersistentState, writeTable, type DevolucionRow, type DetallePagoRow, type MetodoPagoRow, type PagoRow } from "../data/prototypeDatabase";
 
@@ -8,7 +8,7 @@ type SaleStatus = "Pagada" | "Pendiente" | "Anulada";
 type Sale = {
   id: string; client: string; appointmentId: string; service: string; employee: string;
   date: string; time: string; price: number; discount: number; payMethod: string;
-  status: SaleStatus; notes: string;
+  status: SaleStatus; notes: string; previousStatus?: Exclude<SaleStatus, "Anulada">;
 };
 
 const SERVICES = ["Manicure Clásico", "Manicure Spa", "Nail Art Gel", "Pedicure Clásico", "Uñas Acrílicas", "Gel Semipermanente", "Pedicure Spa", "Nail Art Premium"];
@@ -36,7 +36,7 @@ const APPOINTMENTS_FALLBACK: AppointmentOption[] = [...new Map(INITIAL.map(sale 
   status: sale.status === "Anulada" ? "Atendida" : sale.status === "Pendiente" ? "Confirmada" : "Atendida",
 }])).values()];
 const EMPTY = { client: "", appointmentId: APPOINTMENTS_FALLBACK[0]?.id ?? "", service: "", employee: "", date: "", time: "", price: "", discount: "0", payMethod: "Efectivo", notes: "" };
-type ModalMode = "create" | "edit" | "detail" | "void" | null;
+type ModalMode = "create" | "edit" | "detail" | "void" | "restore" | null;
 
 const fmt = (n: number) => `$${n.toLocaleString("es-CO")}`;
 
@@ -57,6 +57,7 @@ export default function SalesView() {
   const [modal, setModal] = useState<ModalMode>(null);
   const [selected, setSelected] = useState<Sale | null>(null);
   const [form, setForm] = useState({ ...EMPTY });
+  const [restoreStatus, setRestoreStatus] = useState<Exclude<SaleStatus, "Anulada">>("Pendiente");
   const toast = useToast();
 
   const formFromAppointment = (appointmentId: string, discount = "0", payMethod = "Efectivo") => {
@@ -145,6 +146,7 @@ export default function SalesView() {
     setSelected(sale ?? null);
     if (mode === "create") setForm(formFromAppointment(appointmentOptions[0]?.id ?? ""));
     if (mode === "edit" && sale) setForm({ client: sale.client, appointmentId: sale.appointmentId, service: sale.service, employee: sale.employee, date: sale.date, time: sale.time, price: String(sale.price), discount: String(sale.discount), payMethod: sale.payMethod, notes: sale.notes });
+    if (mode === "restore" && sale) setRestoreStatus(sale.previousStatus ?? "Pendiente");
     setModal(mode);
   };
 
@@ -165,7 +167,22 @@ export default function SalesView() {
   };
 
   const voidSale = () => {
-    if (selected) setSales(p => p.map(s => s.id === selected.id ? { ...s, status: "Anulada" } : s));
+    if (!selected || selected.status === "Anulada") {
+      setModal(null);
+      return;
+    }
+    const previousStatus = selected.status;
+    setSales(p => p.map(s => s.id === selected.id ? { ...s, status: "Anulada", previousStatus } : s));
+    toast.show("success", `Venta ${selected.id} anulada`);
+    setModal(null);
+  };
+
+  const restoreSale = () => {
+    if (selected?.status === "Anulada") {
+      const status = selected.previousStatus ?? restoreStatus;
+      setSales(p => p.map(s => s.id === selected.id ? { ...s, status, previousStatus: undefined } : s));
+      toast.show("success", `Venta ${selected.id} restaurada`);
+    }
     setModal(null);
   };
 
@@ -235,6 +252,7 @@ export default function SalesView() {
                     <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
                       {s.status !== "Anulada" && <IconBtn icon={<IcoEdit />} onClick={() => open("edit", s)} variant="primary" title="Editar" />}
                       {s.status !== "Anulada" && <IconBtn icon={<IcoX />} onClick={() => open("void", s)} variant="danger" title="Anular" />}
+                      {s.status === "Anulada" && <IconBtn icon={<IcoToggle />} onClick={() => open("restore", s)} variant="primary" title="Desanular venta" />}
                     </div>
                   </Td>
                 </tr>
@@ -307,6 +325,31 @@ export default function SalesView() {
             </p>
           </div>
           <ModalActions onClose={() => setModal(null)} onConfirm={voidSale} confirmLabel="Sí, anular venta" danger />
+        </Modal>
+      )}
+
+      {modal === "restore" && selected && (
+        <Modal title="Desanular Venta" onClose={() => setModal(null)}>
+          <div style={{ textAlign: "center", padding: "16px 0" }}>
+            <div style={{ width: "52px", height: "52px", borderRadius: "50%", background: "#DCFCE7", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px", color: "#15803D" }}><IcoToggle /></div>
+            <p style={{ fontSize: "15px", fontWeight: 600, color: "#221F20", marginBottom: "8px" }}>¿Desanular la venta {selected.id}?</p>
+            <p style={{ fontSize: "13px", color: "#71717A" }}>
+            {selected.previousStatus
+              ? <>La venta volverá al estado <strong>{selected.previousStatus}</strong> y se quitará la anulación asociada.</>
+              : "No se guardó el estado anterior de esta venta. Selecciona a qué estado restaurarla."}
+            </p>
+          </div>
+          {!selected.previousStatus && (
+            <FormRow label="Estado de la venta">
+              <Select value={restoreStatus} onChange={value => {
+                if (value === "Pagada" || value === "Pendiente") setRestoreStatus(value);
+              }} options={[
+                { label: "Pendiente", value: "Pendiente" },
+                { label: "Pagada", value: "Pagada" },
+              ]} />
+            </FormRow>
+          )}
+          <ModalActions onClose={() => setModal(null)} onConfirm={restoreSale} confirmLabel="Sí, desanular venta" />
         </Modal>
       )}
     </div>

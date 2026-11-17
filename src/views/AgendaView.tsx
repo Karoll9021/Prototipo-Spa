@@ -1,30 +1,52 @@
-import { useEffect, useState } from "react";
-import { Card, PageHeader, PrimaryBtn, GhostBtn, IconBtn, SearchInput, Modal, FormRow, Input, Select, ModalActions, DetailRow, Th, Td, IcoPlus, IcoEdit, IcoEye, IcoClock } from "../components/ui";
+import { Fragment, useEffect, useState } from "react";
+import { Badge, Card, PageHeader, PrimaryBtn, GhostBtn, IconBtn, SearchInput, Modal, FormRow, Input, Select, ModalActions, DetailRow, Th, Td, IcoPlus, IcoEdit, IcoEye } from "../components/ui";
 import { useToast } from "../components/feedback";
 import { readUserDirectory } from "../data/userDirectory";
 import { nextPrefixedId, usePersistentState, writeTable, type HorarioEmpleadoRow } from "../data/prototypeDatabase";
-import { DEFAULT_BUSINESS_HOURS, DEFAULT_EMPLOYEE_SCHEDULES, WEEKDAYS, type EmployeeSchedule } from "../data/scheduling";
+import { DEFAULT_EMPLOYEE_SCHEDULES, WEEKDAYS, type EmployeeSchedule } from "../data/scheduling";
 
 const DAYS = WEEKDAYS;
 const EMPLOYEES = ["Andrea López", "Camila Reyes", "Juliana Mora", "Paola Sierra"];
 
 type Schedule = EmployeeSchedule;
+type Appointment = { id: string; client: string; service: string[]; employee: string; date: string; time: string; status: string };
 
 const EMPTY = { employee: EMPLOYEES[0], days: [] as string[], startTime: "08:00", endTime: "17:00", breakStart: "12:00", breakEnd: "13:00", notes: "" };
-type ModalMode = "create" | "edit" | "detail" | "biz" | null;
+type ModalMode = "create" | "edit" | "detail" | null;
+
+function localDateString(date: Date) {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function mondayOfWeek(date: Date) {
+  const monday = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  monday.setDate(monday.getDate() - (monday.getDay() + 6) % 7);
+  return monday;
+}
 
 export default function AgendaView() {
   const [schedules, setSchedules] = usePersistentState<Schedule[]>("eko-schedules", DEFAULT_EMPLOYEE_SCHEDULES);
+  const [appointments] = useState<Appointment[]>(() => {
+    const stored = localStorage.getItem("eko-appointments");
+    if (!stored) return [];
+    try {
+      return JSON.parse(stored) as Appointment[];
+    } catch (error) {
+      console.error("No se pudieron leer las citas para la agenda diaria.", error);
+      return [];
+    }
+  });
   const [employeeOptions] = useState(() => {
     const available = readUserDirectory().filter(user => user.active && user.roles.includes("Empleada")).map(user => user.name);
     return available.length ? available : EMPLOYEES;
   });
   const [search, setSearch] = useState("");
+  const [weekStart, setWeekStart] = useState(() => mondayOfWeek(new Date()));
+  const [selectedScheduleCell, setSelectedScheduleCell] = useState<{ employee: string; date: string } | null>(null);
   const [modal, setModal] = useState<ModalMode>(null);
   const [selected, setSelected] = useState<Schedule | null>(null);
   const [form, setForm] = useState({ ...EMPTY, employee: employeeOptions[0] });
-  const [bizForm, setBizForm] = usePersistentState("eko-business-hours", DEFAULT_BUSINESS_HOURS);
-  const [businessHoursDraft, setBusinessHoursDraft] = useState(bizForm);
   const toast = useToast();
 
   useEffect(() => {
@@ -44,10 +66,20 @@ export default function AgendaView() {
   }, [schedules]);
 
   const filtered = schedules.filter(s => s.employee.toLowerCase().includes(search.toLowerCase()) || s.id.toLowerCase().includes(search.toLowerCase()));
+  const weekDates = DAYS.map((_, index) => {
+    const date = new Date(weekStart);
+    date.setDate(weekStart.getDate() + index);
+    return date;
+  });
+  const dailyAppointments = appointments
+    .filter(appointment => appointment.date === selectedScheduleCell?.date && appointment.employee === selectedScheduleCell?.employee)
+    .sort((a, b) => a.time.localeCompare(b.time));
+  const selectedDateLabel = selectedScheduleCell
+    ? new Date(`${selectedScheduleCell.date}T12:00:00`).toLocaleDateString("es-CO", { weekday: "long", day: "numeric", month: "long" })
+    : "";
 
   const open = (mode: ModalMode, sc?: Schedule) => {
     setSelected(sc ?? null);
-    if (mode === "biz") setBusinessHoursDraft({ ...bizForm, days: [...bizForm.days] });
     if (mode === "create") setForm({ ...EMPTY, employee: employeeOptions[0], days: [] });
     if (mode === "edit" && sc) setForm({ employee: sc.employee, days: [...sc.days], startTime: sc.startTime, endTime: sc.endTime, breakStart: sc.breakStart, breakEnd: sc.breakEnd, notes: sc.notes });
     setModal(mode);
@@ -67,42 +99,25 @@ export default function AgendaView() {
     setModal(null);
   };
 
-  const saveBusinessHours = () => {
-    if (businessHoursDraft.open >= businessHoursDraft.close || businessHoursDraft.days.length === 0) {
-      toast.show("error", "Configura un rango de atención y al menos un día");
-      return;
-    }
-    setBizForm(businessHoursDraft);
-    setModal(null);
-  };
-
   const toggleDay = (day: string) =>
     setForm(p => ({ ...p, days: p.days.includes(day) ? p.days.filter(d => d !== day) : [...p.days, day] }));
 
   const f = (k: keyof typeof EMPTY) => (v: string) => setForm(p => ({ ...p, [k]: v }));
+  const changeWeek = (offset: number) => {
+    setWeekStart(current => {
+      const next = new Date(current);
+      next.setDate(next.getDate() + offset * 7);
+      return next;
+    });
+    setSelectedScheduleCell(null);
+  };
+  const weekRange = `${weekDates[0].toLocaleDateString("es-CO", { day: "numeric", month: "short" })} – ${weekDates[6].toLocaleDateString("es-CO", { day: "numeric", month: "short", year: "numeric" })}`;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-      <PageHeader title="Agenda — Horarios" desc="Configura horarios del establecimiento y gestiona turnos de empleadas">
-        <GhostBtn onClick={() => setModal("biz")}><IcoClock /> Horario del negocio</GhostBtn>
+      <PageHeader title="Agenda — Horarios" desc="Consulta las citas del día y gestiona los horarios de cada empleada">
         <PrimaryBtn onClick={() => open("create")}><IcoPlus /> Asignar Horario</PrimaryBtn>
       </PageHeader>
-
-      {/* Business hours summary */}
-      <div style={{ background: "linear-gradient(135deg, #FCE8EE 0%, #F7DCE5 100%)", border: "1px solid #E8B4C3", borderRadius: "12px", padding: "20px 24px", display: "flex", gap: "32px", flexWrap: "wrap" }}>
-        <div>
-          <p style={{ fontSize: "11px", color: "#8F2442", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "4px" }}>Horario de Atención</p>
-          <p style={{ fontSize: "20px", fontWeight: 700, color: "#6D1530", fontFamily: "'Montserrat', sans-serif" }}>{bizForm.open} – {bizForm.close}</p>
-        </div>
-        <div>
-          <p style={{ fontSize: "11px", color: "#8F2442", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "4px" }}>Días de Atención</p>
-          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-            {DAYS.map(d => (
-              <span key={d} style={{ fontSize: "12px", padding: "3px 10px", borderRadius: "999px", background: bizForm.days.includes(d) ? "#9F2F4D" : "#E5DDE1", color: bizForm.days.includes(d) ? "#FFFFFF" : "#393139", fontWeight: 700 }}>{d.slice(0, 3)}</span>
-            ))}
-          </div>
-        </div>
-      </div>
 
       <div style={{ display: "flex", gap: "12px" }}>
         <SearchInput value={search} onChange={setSearch} placeholder="Buscar por empleada o ID..." />
@@ -144,33 +159,81 @@ export default function AgendaView() {
 
       {/* Weekly grid view */}
       <Card>
-        <div style={{ padding: "18px 24px", borderBottom: "1px solid #E4E4E7" }}>
-          <h2 style={{ fontFamily: "'Montserrat', sans-serif", fontSize: "15px", fontWeight: 600, color: "#221F20" }}>Vista Semanal</h2>
+        <div style={{ padding: "18px 24px", borderBottom: "1px solid #E4E4E7", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+          <div>
+            <h2 style={{ fontFamily: "'Montserrat', sans-serif", fontSize: "15px", fontWeight: 600, color: "#221F20" }}>Vista Semanal</h2>
+            <p style={{ fontSize: "12px", color: "#71717A", marginTop: "4px" }}>{weekRange} · Selecciona un día para ver sus citas.</p>
+          </div>
+          <div style={{ display: "flex", gap: "8px" }}>
+            <GhostBtn onClick={() => changeWeek(-1)}>‹ Semana anterior</GhostBtn>
+            <GhostBtn onClick={() => changeWeek(1)}>Semana siguiente ›</GhostBtn>
+          </div>
         </div>
         <div style={{ padding: "20px 24px", overflowX: "auto" }}>
           <div style={{ display: "grid", gridTemplateColumns: `120px repeat(7, 1fr)`, gap: "6px", minWidth: "700px" }}>
             <div />
-            {DAYS.map(d => (
-              <div key={d} style={{ textAlign: "center", fontSize: "11px", fontWeight: 700, color: "#71717A", textTransform: "uppercase", letterSpacing: "0.05em", paddingBottom: "8px" }}>{d.slice(0, 3)}</div>
-            ))}
-            {EMPLOYEES.map(emp => {
-              const sc = schedules.find(s => s.employee === emp);
+            {DAYS.map((day, index) => {
               return (
-                <>
-                  <div key={emp} style={{ fontSize: "12px", fontWeight: 500, color: "#221F20", paddingTop: "8px", paddingRight: "8px", display: "flex", alignItems: "flex-start" }}>{emp.split(" ")[0]}</div>
-                  {DAYS.map(d => {
-                    const on = sc?.days.includes(d);
+                <div key={day} style={{ borderRadius: "8px", color: "#71717A", textAlign: "center", fontSize: "11px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", padding: "6px 2px", display: "flex", flexDirection: "column", gap: "3px" }}>
+                  <span>{day.slice(0, 3)}</span>
+                  <span>{weekDates[index].toLocaleDateString("es-CO", { day: "numeric" })}</span>
+                </div>
+              );
+            })}
+            {employeeOptions.map(emp => {
+              return (
+                <Fragment key={emp}>
+                  <div style={{ fontSize: "12px", fontWeight: 500, color: "#221F20", paddingTop: "8px", paddingRight: "8px", display: "flex", alignItems: "flex-start" }}>{emp.split(" ")[0]}</div>
+                  {DAYS.map((d, index) => {
+                    const sc = schedules.find(s => s.employee === emp && s.days.includes(d));
+                    const on = Boolean(sc);
+                    const date = localDateString(weekDates[index]);
+                    const selected = date === selectedScheduleCell?.date && emp === selectedScheduleCell.employee;
                     return (
-                      <div key={d} style={{ height: "40px", borderRadius: "8px", background: on ? "#FCE8EE" : "#F9F9FB", border: `1px solid ${on ? "#F0C4D0" : "#E4E4E7"}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        {on && <span style={{ fontSize: "10px", color: "#B8405E", fontWeight: 700 }}>{sc!.startTime}–{sc!.endTime.slice(0, 5)}</span>}
-                      </div>
+                      <button key={d} type="button"
+                        onClick={() => setSelectedScheduleCell(current => current?.employee === emp && current.date === date ? null : { employee: emp, date })}
+                        aria-pressed={selected}
+                        aria-label={`Ver citas de ${emp} para el ${d}`}
+                        style={{ height: "40px", borderRadius: "8px", background: selected ? "#F7DCE5" : on ? "#FCE8EE" : "#F9F9FB", border: `1px solid ${selected ? "#E88099" : on ? "#F0C4D0" : "#E4E4E7"}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                        {sc && <span style={{ fontSize: "10px", color: "#B8405E", fontWeight: 700 }}>{sc.startTime}–{sc.endTime.slice(0, 5)}</span>}
+                      </button>
                     );
                   })}
-                </>
+                </Fragment>
               );
             })}
           </div>
         </div>
+        {selectedScheduleCell && (
+          <div style={{ borderTop: "1px solid #E4E4E7" }}>
+            <div style={{ padding: "16px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+              <div>
+                <h3 style={{ fontFamily: "'Montserrat', sans-serif", fontSize: "14px", fontWeight: 600, color: "#221F20", textTransform: "capitalize" }}>Citas de {selectedScheduleCell.employee} · {selectedDateLabel}</h3>
+                <p style={{ fontSize: "12px", color: "#71717A", marginTop: "4px" }}>Solo se muestran las citas asignadas a esta empleada.</p>
+              </div>
+              <GhostBtn onClick={() => setSelectedScheduleCell(null)}>Cerrar</GhostBtn>
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead><tr><Th>Hora</Th><Th>Cliente</Th><Th>Servicio</Th><Th>Empleada</Th><Th>Estado</Th></tr></thead>
+                <tbody>
+                  {dailyAppointments.map(appointment => (
+                    <tr key={appointment.id}>
+                      <Td style={{ fontWeight: 600, color: "#221F20" }}>{appointment.time}</Td>
+                      <Td style={{ color: "#221F20" }}>{appointment.client}</Td>
+                      <Td>{appointment.service.join(", ")}</Td>
+                      <Td>{appointment.employee}</Td>
+                      <Td><Badge label={appointment.status} /></Td>
+                    </tr>
+                  ))}
+                  {dailyAppointments.length === 0 && (
+                    <tr><td colSpan={5} style={{ padding: "24px", textAlign: "center", color: "#71717A", fontSize: "13px" }}>No hay citas registradas para este día.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </Card>
 
       {/* Create / Edit */}
@@ -225,31 +288,6 @@ export default function AgendaView() {
         </Modal>
       )}
 
-      {/* Business hours modal */}
-      {modal === "biz" && (
-        <Modal title="Configurar Horario del Negocio" onClose={() => setModal(null)}>
-          <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-              <FormRow label="Apertura"><Input value={businessHoursDraft.open} onChange={v => setBusinessHoursDraft(p => ({ ...p, open: v }))} type="time" /></FormRow>
-              <FormRow label="Cierre"><Input value={businessHoursDraft.close} onChange={v => setBusinessHoursDraft(p => ({ ...p, close: v }))} type="time" /></FormRow>
-            </div>
-            <FormRow label="Días de atención">
-              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                {DAYS.map(d => {
-                  const on = businessHoursDraft.days.includes(d);
-                  return (
-                    <button key={d} onClick={() => setBusinessHoursDraft(p => ({ ...p, days: on ? p.days.filter(x => x !== d) : [...p.days, d] }))}
-                      style={{ padding: "7px 14px", borderRadius: "8px", fontSize: "12px", fontWeight: 600, border: `1.5px solid ${on ? "#E88099" : "#E4E4E7"}`, background: on ? "#FCE8EE" : "#FAFAFA", color: on ? "#B8405E" : "#71717A", cursor: "pointer" }}>
-                      {d}
-                    </button>
-                  );
-                })}
-              </div>
-            </FormRow>
-          </div>
-          <ModalActions onClose={() => setModal(null)} onConfirm={saveBusinessHours} confirmLabel="Guardar Configuración" />
-        </Modal>
-      )}
     </div>
   );
 }
