@@ -144,3 +144,6 @@
 *.stl                filter=lfs diff=lfs merge=lfs -text
 *.nc                 filter=lfs diff=lfs merge=lfs -text
 *.mat                filter=lfs diff=lfs merge=lfs -text
+
+# Public assets must be stored as complete files for static hosting providers.
+public/**            -filter -diff -merge -text

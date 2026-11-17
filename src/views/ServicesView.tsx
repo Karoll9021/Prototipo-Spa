@@ -6,14 +6,14 @@ import { nextPrefixedId, readTable, toDatabaseDateTime, usePersistentState, writ
 type Service = { id: string; name: string; desc: string; duration: string; price: string; specialty: string; active: boolean; image?: string };
 
 const SERVICE_IMAGES: Record<string, string> = {
-  "Manicure Clásico": "/services/manicure-clasico.png",
-  "Manicure Spa": "/services/manicure-spa.jpg",
-  "Nail Art Gel": "/services/nail-art-gel.webp",
-  "Pedicure Clásico": "/services/pedicure-clasico.webp",
-  "Uñas Acrílicas": "/services/unas-acrilicas.jpg",
-  "Gel Semipermanente": "/services/gel-semipermanente.jpg",
-  "Pedicure Spa": "/services/pedicure-spa.webp",
-  "Nail Art Premium": "/services/nail-art-premium.jpg",
+  "Manicure Clásico": "services/manicure-clasico.png",
+  "Manicure Spa": "services/manicure-spa.jpg",
+  "Nail Art Gel": "services/nail-art-gel.webp",
+  "Pedicure Clásico": "services/pedicure-clasico.webp",
+  "Uñas Acrílicas": "services/unas-acrilicas.jpg",
+  "Gel Semipermanente": "services/gel-semipermanente.jpg",
+  "Pedicure Spa": "services/pedicure-spa.webp",
+  "Nail Art Premium": "services/nail-art-premium.jpg",
 };
 
 const SPECIALTY_OPTIONS = [
@@ -127,7 +127,11 @@ export default function ServicesView() {
     reader.readAsDataURL(file);
   };
 
-  const getServiceImage = (service: Service) => service.image || SERVICE_IMAGES[service.name];
+  const getServiceImage = (service: Service) => {
+    if (service.image) return service.image;
+    const imagePath = SERVICE_IMAGES[service.name];
+    return imagePath ? `${import.meta.env.BASE_URL}${imagePath}` : undefined;
+  };
   const toggleStatus = (id: string) => setServices(p => p.map(s => s.id === id ? { ...s, active: !s.active } : s));
   const f = (k: keyof typeof EMPTY) => (v: string) => setForm(p => ({ ...p, [k]: v }));
 
